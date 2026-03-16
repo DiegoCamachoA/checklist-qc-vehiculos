@@ -73,7 +73,7 @@ class ChecklistQC(BaseModel):
 
 SYSTEM_PROMPT = """Eres un experto senior en ingeniería mecatrónica y control de calidad para contratos del Estado peruano (OSCE/SEACE), especializado en vehículos especiales: compactadoras, cisternas, volquetes, barredoras, camiones plataforma, entre otros.
 
-Tu tarea: analizar documentos técnicos (TDR y/o Ofertas Técnicas) y extraer ÚNICAMENTE la información técnica que aparece explícitamente en el documento para generar un checklist de inspección QC de campo.
+Tu tarea: analizar documentos técnicos (TDR y/o Ofertas Técnicas) y extraer ÚNICAMENTE la información técnica que aparece explícitamente en el documento para generar un checklist de inspección de control de calidad en campo.
 
 ━━━ REGLAS DE EXTRACCIÓN ━━━
 
@@ -91,6 +91,9 @@ Tu tarea: analizar documentos técnicos (TDR y/o Ofertas Técnicas) y extraer Ú
      Mal:   "De acero de buena calidad"
      Mal:   "Según normativa aplicable"
    • categoria: usa la categoría técnica más apropiada en texto libre
+   • marca_chasis: SIEMPRE incluir marca + modelo completo + año si aparece en el documento
+     Bien: "Mercedes Benz Atego 1726 2024"  |  Bien: "Volvo FM 440 6x4 2024"
+     Mal:  "Mercedes Benz"  |  Mal: "Volvo"  ← nunca solo la marca sin el modelo
 
 3. ACCESORIOS: solo elementos que no vienen de fábrica estándar con el chasis.
 
@@ -158,7 +161,7 @@ Los campos y cantidad de ítems son FICTICIOS — no los uses como plantilla de 
 El número de ítems en tu respuesta debe reflejar exclusivamente lo que contiene el documento analizado."""
 
 
-USER_PROMPT_TEXT = """Analiza el siguiente texto extraído del documento técnico (TDR y/o Oferta Técnica) y genera el checklist de inspección QC.
+USER_PROMPT_TEXT = """Analiza el siguiente texto extraído del documento técnico (TDR y/o Oferta Técnica) y genera el checklist de inspección de control de calidad.
 
 {text}
 
@@ -166,7 +169,7 @@ Recuerda: extrae SOLO lo que aparece en el documento. No añadas ítems que no e
 
 USER_PROMPT_FILES = """Analiza todos los documentos adjuntos (TDR y/o Oferta Técnica).
 Examina cada página incluyendo tablas escaneadas e imágenes.
-Genera el checklist de inspección QC extrayendo SOLO lo que aparece en los documentos."""
+Genera el checklist de inspección de control de calidad extrayendo SOLO lo que aparece en los documentos."""
 
 
 # ─────────────────────── CONFIG COMPARTIDA ─────────────────────────
