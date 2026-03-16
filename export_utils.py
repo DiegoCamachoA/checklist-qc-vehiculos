@@ -564,20 +564,16 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
     </div>
     <div class="header-title">
       <div class="doc-title">Checklist de Inspección · Control de Calidad</div>
-      <div class="doc-subtitle">Integración Chasis–Carrocería · Vehículos Especiales · Contratos Estado Peruano</div>
+      <div class="doc-subtitle">Supervisión Pre-entrega de Integración Chasis–Carrocería</div>
     </div>
     <div class="header-meta">
       <div>
         <div class="meta-label">Código</div>
-        <div class="meta-value">CHK-CC-001</div>
+        <div class="meta-value">CHK-IA-001</div>
       </div>
       <div>
         <div class="meta-label">Fecha</div>
         <div class="meta-value">{generated_at}</div>
-      </div>
-      <div>
-        <div class="meta-label">Versión</div>
-        <div class="meta-value">IA-GEN v1.0</div>
       </div>
     </div>
   </div>
