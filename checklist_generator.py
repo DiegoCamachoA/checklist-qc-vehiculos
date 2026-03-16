@@ -1,12 +1,17 @@
 """
 checklist_generator.py
-Módulo de extracción de texto PDF y generación de checklist vía Google Gemini API.
+Módulo de generación de checklist vía Google Gemini Files API.
+
+Estrategia: En lugar de extraer texto del PDF (que falla con escaneados),
+subimos el PDF directamente a la Files API de Gemini. El modelo lee las
+páginas como imágenes con OCR nativo, manejando tanto PDFs con texto
+como PDFs escaneados sin ninguna dependencia adicional.
 """
 
 import json
 import os
 import io
-import pdfplumber
+import time
 from google import genai
 
 
@@ -14,7 +19,7 @@ from google import genai
 SYSTEM_PROMPT = """Eres un experto senior en ingeniería mecatrónica, vehículos especiales y control de calidad para contratos del Estado peruano (OSCE/SEACE).
 Tu especialidad es integrar chasis (Mercedes Benz, Volvo, Scania, etc.) con carrocerías especiales (compactadoras de basura, cisternas, volquetes, barredoras, etc.) fabricadas por terceros.
 
-Tu tarea: analizar documentos técnicos en español (Términos de Referencia - TDR y/o Ofertas Técnicas) y extraer TODA la información técnica relevante para generar un checklist de inspección de control de calidad en campo (taller del carrocero).
+Tu tarea: analizar documentos técnicos en español (Términos de Referencia - TDR y/o Ofertas Técnicas) — incluyendo tablas escaneadas y texto impreso — y extraer TODA la información técnica relevante para generar un checklist de inspección de control de calidad en campo (taller del carrocero).
 
 REGLA CRÍTICA: Responde ÚNICAMENTE con un objeto JSON válido y bien formado. Sin markdown, sin bloques de código, sin explicaciones, sin texto antes o después. Solo el JSON puro.
 
@@ -54,10 +59,11 @@ El JSON debe seguir EXACTAMENTE esta estructura:
   ]
 }
 
-INSTRUCCIONES DE EXTRACCIÓN:
+INSTRUCCIONES DE EXTRACCIÓN — LEE TABLAS Y TEXTO ESCANEADO:
 
 PARA verificacion_fisica (mínimo 15 ítems si el documento lo permite):
-- Extrae TODOS los requerimientos técnicos: espesores de plancha, materiales (ASTM, SAE), dimensiones, capacidades, presiones, potencias, normas (ISO, NTP, ASTM)
+- Examina TODAS las páginas incluyendo tablas escaneadas como imágenes
+- Extrae TODOS los requerimientos técnicos: espesores de plancha, materiales (ASTM, SAE, DIN), dimensiones, capacidades, presiones, potencias, normas (ISO, NTP, ASTM)
 - Cada ítem debe ser verificable físicamente en el taller
 
 PARA accesorios_adicionales:
@@ -71,76 +77,67 @@ PARA pruebas_funcionamiento — DEDUCE según tipo_maquina:
 - BARREDORA: Ancho barrido, Caudal sistema agua, RPM cepillos
 - Para otros equipos: deduce pruebas lógicas según el tipo identificado
 
-Si el texto es insuficiente para un campo, usa valores genéricos razonables y márcalos con (estimado)."""
+IMPORTANTE: Extrae los valores REALES del documento. Solo usa valores genéricos si una especificación realmente no está mencionada en ninguna página del documento."""
+
+USER_PROMPT = """Analiza todos los documentos adjuntos (TDR y/o Oferta Técnica). Examina cada página incluyendo tablas escaneadas.
+
+Genera el checklist de inspección de control de calidad completo.
+
+Responde ÚNICAMENTE con el JSON puro, sin texto adicional antes ni después."""
 
 
-def extract_pdf_text(pdf_files) -> str:
+def generate_checklist_from_pdfs(pdf_files: list, api_key: str) -> dict:
     """
-    Extrae y concatena el texto de uno o más archivos PDF cargados en Streamlit.
+    Sube los PDFs a la Files API de Gemini y genera el checklist.
+    Maneja PDFs escaneados nativamente — Gemini lee las imágenes directamente.
     """
-    all_text = []
+    client = genai.Client(api_key=api_key)
+    uploaded_file_refs = []
 
+    # ── 1. Subir cada PDF a la Files API ─────────────────────────────
     for uploaded_file in pdf_files:
         file_bytes = uploaded_file.read()
         uploaded_file.seek(0)
 
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            doc_texts = []
-            for i, page in enumerate(pdf.pages):
-                page_text = page.extract_text(x_tolerance=2, y_tolerance=2)
-                if page_text:
-                    doc_texts.append(f"[Página {i+1}]\n{page_text.strip()}")
-
-            if doc_texts:
-                section_header = f"\n{'='*60}\nDOCUMENTO: {uploaded_file.name}\n{'='*60}\n"
-                all_text.append(section_header + "\n\n".join(doc_texts))
-
-    if not all_text:
-        raise ValueError(
-            "No se pudo extraer texto de ningún PDF. "
-            "Verifica que los archivos no estén escaneados sin OCR."
+        file_ref = client.files.upload(
+            file=io.BytesIO(file_bytes),
+            config=genai.types.UploadFileConfig(
+                mime_type="application/pdf",
+                display_name=uploaded_file.name,
+            ),
         )
 
-    return "\n\n".join(all_text)
+        # Esperar a que el archivo esté ACTIVE (máx 30 seg)
+        waited = 0
+        while file_ref.state.name == "PROCESSING" and waited < 30:
+            time.sleep(2)
+            waited += 2
+            file_ref = client.files.get(name=file_ref.name)
 
+        uploaded_file_refs.append(file_ref)
 
-def generate_checklist_with_llm(pdf_text: str) -> dict:
-    """
-    Envía el texto extraído a Google Gemini y devuelve el checklist como diccionario.
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "No se encontró GEMINI_API_KEY. "
-            "Configúrala en los Secrets de Streamlit Cloud o en el sidebar."
-        )
+    # ── 2. Construir contenido: archivos + prompt ─────────────────────
+    contents = uploaded_file_refs + [USER_PROMPT]
 
-    # Configurar cliente con el nuevo SDK (google-genai)
-    client = genai.Client(api_key=api_key)
-
-    # Limitar texto a ~50k caracteres
-    max_chars = 50_000
-    truncated_text = pdf_text[:max_chars]
-    if len(pdf_text) > max_chars:
-        truncated_text += f"\n\n[NOTA: Texto truncado. Se procesaron {max_chars:,} de {len(pdf_text):,} caracteres totales.]"
-
-    full_prompt = f"""{SYSTEM_PROMPT}
-
----
-
-Analiza el siguiente documento técnico (TDR y/o Oferta Técnica) y genera el checklist de inspección de control de calidad completo en formato JSON:
-
-{truncated_text}
-
-IMPORTANTE: Responde ÚNICAMENTE con el JSON puro. Ningún texto, ningún bloque markdown antes ni después."""
-
+    # ── 3. Llamar al modelo ───────────────────────────────────────────
     response = client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=full_prompt,
+        contents=contents,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+        ),
     )
+
+    # ── 4. Limpiar archivos subidos ───────────────────────────────────
+    for ref in uploaded_file_refs:
+        try:
+            client.files.delete(name=ref.name)
+        except Exception:
+            pass
+
+    # ── 5. Parsear respuesta ──────────────────────────────────────────
     raw_text = response.text.strip()
 
-    # Limpieza defensiva de posibles bloques markdown
     if raw_text.startswith("```"):
         lines = raw_text.split("\n")
         if lines[0].startswith("```"):
@@ -151,7 +148,6 @@ IMPORTANTE: Responde ÚNICAMENTE con el JSON puro. Ningún texto, ningún bloque
 
     checklist_data = json.loads(raw_text)
 
-    # Validación mínima de estructura
     required_keys = ["tipo_maquina", "datos_equipo", "verificacion_fisica",
                      "accesorios_adicionales", "pruebas_funcionamiento"]
     for key in required_keys:

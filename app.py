@@ -7,7 +7,7 @@ import streamlit as st
 import json
 import os
 from datetime import datetime
-from checklist_generator import extract_pdf_text, generate_checklist_with_llm
+from checklist_generator import generate_checklist_from_pdfs
 from export_utils import generate_html_checklist
 
 # ─────────────────────────── PAGE CONFIG ───────────────────────────
@@ -24,27 +24,27 @@ st.markdown("""
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
   :root {
     --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a; --border: #2e334a;
-    --accent: #f0a500; --accent2: #3a8eff; --text: #e8eaf0; --muted: #7a8099;
+    --accent: #2554c7; --accent2: #3a8eff; --text: #e8eaf0; --muted: #7a8099;
     --danger: #e05252; --success: #3ecf8e;
     --mono: 'IBM Plex Mono', monospace; --sans: 'IBM Plex Sans', sans-serif;
   }
   html, body, [class*="css"] { font-family: var(--sans) !important; background-color: var(--bg) !important; color: var(--text) !important; }
   .app-header { background: linear-gradient(135deg, #0f1117 0%, #1a1d27 50%, #0f1117 100%); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 4px; padding: 24px 32px; margin-bottom: 28px; position: relative; overflow: hidden; }
-  .app-header::before { content: ''; position: absolute; top: -50%; right: -10%; width: 300px; height: 300px; background: radial-gradient(circle, rgba(240,165,0,0.06) 0%, transparent 70%); pointer-events: none; }
+  .app-header::before { content: ''; position: absolute; top: -50%; right: -10%; width: 300px; height: 300px; background: radial-gradient(circle, rgba(37,84,199,0.06) 0%, transparent 70%); pointer-events: none; }
   .app-header h1 { font-family: var(--mono) !important; font-size: 1.6rem !important; font-weight: 600 !important; color: var(--accent) !important; margin: 0 0 6px 0 !important; letter-spacing: 0.02em !important; }
   .app-header p { color: var(--muted) !important; font-size: 0.88rem !important; margin: 0 !important; }
-  .badge { display: inline-block; background: rgba(240,165,0,0.12); color: var(--accent); border: 1px solid rgba(240,165,0,0.3); border-radius: 3px; font-family: var(--mono); font-size: 0.7rem; padding: 2px 8px; margin-right: 8px; margin-top: 10px; }
+  .badge { display: inline-block; background: rgba(37,84,199,0.12); color: var(--accent); border: 1px solid rgba(37,84,199,0.3); border-radius: 3px; font-family: var(--mono); font-size: 0.7rem; padding: 2px 8px; margin-right: 8px; margin-top: 10px; }
   .panel-title { font-family: var(--mono) !important; font-size: 0.75rem !important; font-weight: 600 !important; color: var(--accent) !important; letter-spacing: 0.1em !important; text-transform: uppercase !important; margin-bottom: 14px !important; border-bottom: 1px solid var(--border) !important; padding-bottom: 10px !important; }
   [data-testid="stFileUploader"] { background: var(--surface) !important; border: 2px dashed var(--border) !important; border-radius: 8px !important; transition: border-color 0.2s !important; }
   [data-testid="stFileUploader"]:hover { border-color: var(--accent) !important; }
-  .stButton > button { background: var(--accent) !important; color: #0f1117 !important; border: none !important; border-radius: 4px !important; font-family: var(--mono) !important; font-weight: 600 !important; font-size: 0.85rem !important; letter-spacing: 0.05em !important; padding: 10px 24px !important; transition: all 0.2s !important; text-transform: uppercase !important; }
-  .stButton > button:hover { background: #ffc72c !important; transform: translateY(-1px) !important; box-shadow: 0 4px 16px rgba(240,165,0,0.3) !important; }
+  .stButton > button { background: var(--accent) !important; color: #ffffff !important; border: none !important; border-radius: 4px !important; font-family: var(--mono) !important; font-weight: 600 !important; font-size: 0.85rem !important; letter-spacing: 0.05em !important; padding: 10px 24px !important; transition: all 0.2s !important; text-transform: uppercase !important; }
+  .stButton > button:hover { background: #4b7cf3 !important; transform: translateY(-1px) !important; box-shadow: 0 4px 16px rgba(37,84,199,0.3) !important; }
   .stDownloadButton > button { background: var(--surface2) !important; color: var(--accent2) !important; border: 1px solid var(--accent2) !important; border-radius: 4px !important; font-family: var(--mono) !important; font-weight: 600 !important; font-size: 0.82rem !important; letter-spacing: 0.04em !important; padding: 8px 20px !important; transition: all 0.2s !important; text-transform: uppercase !important; }
   .status-ok { background: rgba(62,207,142,0.08); border: 1px solid rgba(62,207,142,0.3); border-radius: 4px; padding: 10px 14px; color: var(--success); font-family: var(--mono); font-size: 0.82rem; margin-bottom: 12px; }
-  .status-warn { background: rgba(240,165,0,0.08); border: 1px solid rgba(240,165,0,0.3); border-radius: 4px; padding: 10px 14px; color: var(--accent); font-family: var(--mono); font-size: 0.82rem; margin-bottom: 12px; }
+  .status-warn { background: rgba(37,84,199,0.08); border: 1px solid rgba(37,84,199,0.3); border-radius: 4px; padding: 10px 14px; color: var(--accent); font-family: var(--mono); font-size: 0.82rem; margin-bottom: 12px; }
   .status-err { background: rgba(224,82,82,0.08); border: 1px solid rgba(224,82,82,0.3); border-radius: 4px; padding: 10px 14px; color: var(--danger); font-family: var(--mono); font-size: 0.82rem; margin-bottom: 12px; }
   .checklist-preview { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 24px; }
-  .cl-section-title { font-family: var(--mono) !important; font-size: 0.72rem !important; font-weight: 600 !important; letter-spacing: 0.12em !important; text-transform: uppercase !important; color: var(--accent) !important; background: rgba(240,165,0,0.08) !important; border-left: 3px solid var(--accent) !important; padding: 6px 12px !important; margin: 18px 0 10px 0 !important; }
+  .cl-section-title { font-family: var(--mono) !important; font-size: 0.72rem !important; font-weight: 600 !important; letter-spacing: 0.12em !important; text-transform: uppercase !important; color: var(--accent) !important; background: rgba(37,84,199,0.08) !important; border-left: 3px solid var(--accent) !important; padding: 6px 12px !important; margin: 18px 0 10px 0 !important; }
   .cl-item { display: flex; align-items: flex-start; gap: 10px; padding: 7px 8px; border-bottom: 1px solid rgba(46,51,74,0.6); font-size: 0.85rem; color: var(--text); }
   .cl-item:hover { background: rgba(255,255,255,0.02); }
   .cl-check { width: 16px; height: 16px; border: 1.5px solid var(--border); border-radius: 2px; flex-shrink: 0; margin-top: 2px; }
@@ -148,17 +148,10 @@ with col_left:
 # ─────────────────────────── GENERATION LOGIC ──────────────────────
 if generate_btn and uploaded_files:
     with col_right:
-        with st.spinner("Extrayendo texto de PDFs..."):
+        with st.spinner("Subiendo PDFs y analizando con Gemini 2.5 Flash... (puede tardar 30-60 seg en PDFs escaneados)"):
             try:
-                pdf_text = extract_pdf_text(uploaded_files)
-                st.markdown(f'<div class="status-ok">✓ Texto extraído · {len(pdf_text):,} caracteres</div>', unsafe_allow_html=True)
-            except Exception as e:
-                st.markdown(f'<div class="status-err">✗ Error leyendo PDFs: {e}</div>', unsafe_allow_html=True)
-                st.stop()
-
-        with st.spinner("Analizando con IA · Gemini 2.0 Flash..."):
-            try:
-                checklist_data = generate_checklist_with_llm(pdf_text)
+                api_key = os.getenv("GEMINI_API_KEY")
+                checklist_data = generate_checklist_from_pdfs(uploaded_files, api_key)
                 st.session_state.checklist_data = checklist_data
                 st.session_state.generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
                 st.markdown('<div class="status-ok">✓ Checklist generado exitosamente</div>', unsafe_allow_html=True)

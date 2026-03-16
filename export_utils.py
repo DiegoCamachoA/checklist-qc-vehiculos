@@ -182,7 +182,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
 
     /* ── Machine type banner ── */
     .machine-banner {{
-      background: #1a1a1a;
+      background: #1e3a8a;
       color: white;
       padding: 5px 14px;
       font-family: 'Roboto Condensed', sans-serif;
@@ -196,7 +196,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
       gap: 10px;
     }}
     .machine-banner .tag {{
-      background: #f0a500;
+      background: #1e3a8a;
       color: #1a1a1a;
       padding: 1px 8px;
       font-size: 7.5pt;
@@ -209,7 +209,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
       page-break-inside: avoid;
     }}
     .section-header {{
-      background: #2c2c2c;
+      background: #1e3a8a;
       color: white;
       padding: 4px 10px;
       font-family: 'Roboto Condensed', sans-serif;
@@ -223,7 +223,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
       margin-bottom: 0;
     }}
     .section-num {{
-      background: #f0a500;
+      background: #1e3a8a;
       color: #1a1a1a;
       width: 18px;
       height: 18px;
@@ -514,7 +514,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
       top: 0;
       left: 0;
       right: 0;
-      background: #1a1a1a;
+      background: #1e3a8a;
       color: white;
       padding: 10px 20px;
       display: flex;
@@ -525,7 +525,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
       font-size: 8.5pt;
     }}
     .print-btn {{
-      background: #f0a500;
+      background: #1e3a8a;
       color: #1a1a1a;
       border: none;
       padding: 7px 20px;
@@ -538,7 +538,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
       border-radius: 3px;
       transition: background 0.15s;
     }}
-    .print-btn:hover {{ background: #ffc72c; }}
+    .print-btn:hover {{ background: #2554c7; }}
     @media print {{ .print-bar {{ display: none; }} }}
     body {{ padding-top: 40px; }}
     @media print {{ body {{ padding-top: 0; }} }}
