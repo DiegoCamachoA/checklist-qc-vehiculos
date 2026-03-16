@@ -13,7 +13,7 @@ from export_utils import generate_html_checklist
 
 # ─────────────────────────── PAGE CONFIG ───────────────────────────
 st.set_page_config(
-    page_title="Checklist · Control de Calidad · Vehículos Especiales",
+    page_title="Checklist · Control de Calidad",
     page_icon="🔧",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -395,7 +395,7 @@ hr { border-color: var(--border) !important; margin: 16px 0 !important; }
 st.markdown("""
 <div class="app-header">
   <h1>🔧 Generador de Checklist de Inspección · Control de Calidad</h1>
-  <p>Control de Calidad · Integración Chasis–Carrocería · Contratos Estado Peruano</p>
+  <p>Control de Calidad · Integración Chasis–Carrocería</p>
   <div>
     <span class="badge">v1.1</span>
     <span class="badge">Gemini 2.5 Flash</span>
