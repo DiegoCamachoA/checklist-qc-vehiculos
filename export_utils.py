@@ -527,7 +527,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
     }}
     .print-btn {{
       background: #1e3a8a;
-      color: #1a1a1a;
+      color: white;
       border: none;
       padding: 7px 20px;
       font-family: 'Roboto Condensed', sans-serif;
