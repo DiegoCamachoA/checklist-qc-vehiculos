@@ -224,8 +224,8 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
       margin-bottom: 0;
     }}
     .section-num {{
-      background: #1e3a8a;
-      color: #1a1a1a;
+      background: white;
+      color: #1e3a8a;
       width: 18px;
       height: 18px;
       border-radius: 50%;
