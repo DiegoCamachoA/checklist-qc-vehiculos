@@ -1,157 +1,331 @@
 """
 checklist_generator.py
-Módulo de generación de checklist vía Google Gemini Files API.
+Extracción híbrida de PDFs + generación de checklist vía Google Gemini.
 
-Estrategia: En lugar de extraer texto del PDF (que falla con escaneados),
-subimos el PDF directamente a la Files API de Gemini. El modelo lee las
-páginas como imágenes con OCR nativo, manejando tanto PDFs con texto
-como PDFs escaneados sin ninguna dependencia adicional.
+Estrategia de extracción (en orden de velocidad):
+  1. pdfplumber  → extrae texto digital en <1 segundo (PDFs con texto)
+  2. Gemini Files API → OCR nativo para páginas sin texto detectable (escaneadas)
+
+Determinismo implementado mediante tres palancas:
+  1. temperature=0     → elimina aleatoriedad en la elección de tokens
+  2. response_schema   → fuerza estructura JSON estricta (forma, no contenido)
+  3. Few-shot en prompt → calibra verbosidad y granularidad del output
 """
 
-import json
 import os
 import io
 import time
+import json
+import pdfplumber
+from typing import List
+from pydantic import BaseModel
 from google import genai
 
 
-# ─────────────────────────── SYSTEM PROMPT ─────────────────────────
-SYSTEM_PROMPT = """Eres un experto senior en ingeniería mecatrónica, vehículos especiales y control de calidad para contratos del Estado peruano (OSCE/SEACE).
-Tu especialidad es integrar chasis (Mercedes Benz, Volvo, Scania, etc.) con carrocerías especiales (compactadoras de basura, cisternas, volquetes, barredoras, etc.) fabricadas por terceros.
+# ─────────────────────────── UMBRAL DE TEXTO ───────────────────────
+# Mínimo de caracteres por página para considerar que pdfplumber tuvo éxito.
+MIN_CHARS_PER_PAGE = 80
 
-Tu tarea: analizar documentos técnicos en español (Términos de Referencia - TDR y/o Ofertas Técnicas) — incluyendo tablas escaneadas y texto impreso — y extraer TODA la información técnica relevante para generar un checklist de inspección de control de calidad en campo (taller del carrocero).
 
-REGLA CRÍTICA: Responde ÚNICAMENTE con un objeto JSON válido y bien formado. Sin markdown, sin bloques de código, sin explicaciones, sin texto antes o después. Solo el JSON puro.
+# ─────────────────────── RESPONSE SCHEMA (Palanca 2) ───────────────
+# Define FORMA del output, no contenido.
+# Las listas no tienen longitud mínima/máxima: si el PDF no menciona
+# un accesorio, la lista estará vacía. Si menciona 20 ítems, habrá 20.
+# Ningún campo de contenido tiene enum ni restricción de valor.
 
-El JSON debe seguir EXACTAMENTE esta estructura:
+class DatosEquipo(BaseModel):
+    entidad_destino: str
+    tipo_vehiculo: str
+    marca_chasis: str
+    nombre_carrocero: str
 
+class ItemVerificacion(BaseModel):
+    categoria: str       # String libre — no enum, para no sesgar categorías
+    item: str
+    especificacion: str
+
+class Accesorio(BaseModel):
+    item: str
+    descripcion: str
+
+class PruebaFuncionamiento(BaseModel):
+    prueba: str
+    unidad: str
+    valor_referencia: str
+
+class ChecklistQC(BaseModel):
+    tipo_maquina: str
+    datos_equipo: DatosEquipo
+    verificacion_fisica: List[ItemVerificacion]
+    accesorios_adicionales: List[Accesorio]
+    pruebas_funcionamiento: List[PruebaFuncionamiento]
+
+
+# ─────────────────────── SYSTEM PROMPT + FEW-SHOT (Palancas 2 y 3) ─
+# Los ejemplos few-shot calibran EXCLUSIVAMENTE:
+#   - Longitud y tono de tipo_maquina (conciso, no descriptivo)
+#   - Formato de especificacion (valor + unidad + norma si aplica)
+#   - Concisión de item (sustantivo + adjetivo necesario, max 8 palabras)
+#   - Que la cantidad de ítems es variable y depende 100% del documento
+#
+# Los ejemplos NO contienen categorías ni valores que puedan repetirse
+# como plantilla — usan equipos y datos distintos entre sí a propósito.
+
+SYSTEM_PROMPT = """Eres un experto senior en ingeniería mecatrónica y control de calidad para contratos del Estado peruano (OSCE/SEACE), especializado en vehículos especiales: compactadoras, cisternas, volquetes, barredoras, camiones plataforma, entre otros.
+
+Tu tarea: analizar documentos técnicos (TDR y/o Ofertas Técnicas) y extraer ÚNICAMENTE la información técnica que aparece explícitamente en el documento para generar un checklist de inspección QC de campo.
+
+━━━ REGLAS DE EXTRACCIÓN ━━━
+
+1. EXTRAE SOLO LO QUE ESTÁ EN EL DOCUMENTO.
+   Si el documento no menciona el tipo de pintura, no incluyas ningún ítem de pintura.
+   Si menciona 6 requerimientos hidráulicos, incluye exactamente 6 — ni más, ni menos.
+
+2. FORMATO DE CAMPOS:
+   • tipo_maquina: nombre técnico conciso del equipo (5-8 palabras máximo)
+   • item: sustantivo técnico, máximo 8 palabras, sin verbos
+   • especificacion: valor exacto del documento + unidad + norma si se indica
+     Bien:  "Plancha ASTM A-36, espesor mínimo 4mm"
+     Bien:  "Capacidad neta 9 m³"
+     Bien:  "Presión máxima 3,500 PSI"
+     Mal:   "De acero de buena calidad"
+     Mal:   "Según normativa aplicable"
+   • categoria: usa la categoría técnica más apropiada en texto libre
+
+3. ACCESORIOS: solo elementos que no vienen de fábrica estándar con el chasis.
+
+4. PRUEBAS: dedúcelas según el tipo de equipo identificado, usando valores del
+   documento si existen. Si no existen valores de referencia, indica "Según TDR".
+
+5. VALOR NO ENCONTRADO: si una especificación no aparece en el documento,
+   escribe "Verificar en TDR" — NUNCA inventes valores numéricos.
+
+━━━ EJEMPLOS DE FORMATO (calibración de verbosidad únicamente) ━━━
+
+Estos dos ejemplos ilustran el nivel de detalle y concisión esperados.
+Los campos y cantidad de ítems son FICTICIOS — no los uses como plantilla de contenido.
+
+— EJEMPLO A (equipo con muchas especificaciones en el TDR) —
 {
-  "tipo_maquina": "string — Tipo específico de vehículo/equipo (ej: Compactadora de Basura de Carga Trasera, Cisterna de Agua Potable, Camión Volquete, Barredora Mecánica, etc.)",
-
+  "tipo_maquina": "Barredora Mecánica de Vía Pública",
   "datos_equipo": {
-    "entidad_destino": "string — Nombre completo de la entidad del Estado que recibirá el equipo. Si no está, usar 'Por definir'.",
-    "tipo_vehiculo": "string — Descripción completa: tipo + uso previsto",
-    "marca_chasis": "string — Marca, modelo y año del chasis. Si no especifica, 'Según oferta técnica'.",
-    "nombre_carrocero": "string — Empresa fabricante de la carrocería. Si no está, 'Por definir'."
+    "entidad_destino": "Municipalidad Distrital de San Isidro",
+    "tipo_vehiculo": "Barredora mecánica autopropulsada para limpieza de vías urbanas",
+    "marca_chasis": "Mercedes Benz Atego 1016 2024",
+    "nombre_carrocero": "Por definir"
   },
-
   "verificacion_fisica": [
-    {
-      "categoria": "string — UNO de estos: Estructura / Carrocería, Sistema Hidráulico, Sistema Eléctrico, Chasis y Transmisión, Pintura y Acabados, Sistema de Compactación, Tanque y Cisterna, Seguridad y Señalización, Cabina y Ergonomía, Normativa y Certificaciones",
-      "item": "string — Nombre conciso del componente a verificar (máx 8 palabras)",
-      "especificacion": "string — Especificación técnica EXACTA del documento: materiales, dimensiones, normas, valores numéricos"
-    }
+    {"categoria": "Estructura / Carrocería", "item": "Tolva de residuos", "especificacion": "Capacidad 4 m³, acero ASTM A-36"},
+    {"categoria": "Sistema de Barrido", "item": "Cepillos laterales", "especificacion": "2 unidades, diámetro 900mm, cerda metálica"},
+    {"categoria": "Sistema Hidráulico", "item": "Presión de trabajo bomba", "especificacion": "180 Bar nominal"},
+    {"categoria": "Sistema Eléctrico", "item": "Tensión de operación", "especificacion": "24V DC, compatible con chasis"},
+    {"categoria": "Pintura y Acabados", "item": "Acabado exterior tolva", "especificacion": "Anticorrosivo epóxico + esmalte PU, 80 micras mínimo"}
   ],
-
   "accesorios_adicionales": [
-    {
-      "item": "string — Nombre del accesorio",
-      "descripcion": "string — Descripción y especificación completa"
-    }
+    {"item": "Cámara de retroceso", "descripcion": "Monitor 7 pulgadas, visión nocturna"},
+    {"item": "Circulinas LED", "descripcion": "2 unidades color ámbar, montaje en cabina"}
   ],
-
   "pruebas_funcionamiento": [
-    {
-      "prueba": "string — Nombre de la prueba operativa",
-      "unidad": "string — Unidad de medida (ej: Segundos, PSI, Bar, L/min, Aprobado/Rechazado)",
-      "valor_referencia": "string — Valor mínimo/máximo según documento, o 'Según TDR' si no especifica"
-    }
+    {"prueba": "Ancho de barrido efectivo", "unidad": "metros", "valor_referencia": "≥ 2.5 m"},
+    {"prueba": "RPM cepillos en operación", "unidad": "RPM", "valor_referencia": "Según TDR"},
+    {"prueba": "Caudal sistema de agua", "unidad": "L/min", "valor_referencia": "≥ 120 L/min"}
   ]
 }
 
-INSTRUCCIONES DE EXTRACCIÓN — LEE TABLAS Y TEXTO ESCANEADO:
+— EJEMPLO B (equipo con pocas especificaciones en el TDR) —
+{
+  "tipo_maquina": "Camión Plataforma con Grúa Articulada",
+  "datos_equipo": {
+    "entidad_destino": "Por definir",
+    "tipo_vehiculo": "Camión plataforma para transporte de carga con grúa articulada",
+    "marca_chasis": "Según oferta técnica",
+    "nombre_carrocero": "Por definir"
+  },
+  "verificacion_fisica": [
+    {"categoria": "Estructura / Carrocería", "item": "Plataforma de carga", "especificacion": "Longitud 6.20 m, ancho 2.40 m, acero SAE 1020"},
+    {"categoria": "Sistema de Elevación", "item": "Capacidad de carga grúa", "especificacion": "5 toneladas a 3 metros de radio"}
+  ],
+  "accesorios_adicionales": [
+    {"item": "Extintor PQS", "descripcion": "6 kg, ubicado en cabina"}
+  ],
+  "pruebas_funcionamiento": [
+    {"prueba": "Carga máxima verificada grúa", "unidad": "Toneladas", "valor_referencia": "5 t"},
+    {"prueba": "Estabilidad con carga lateral", "unidad": "Aprobado/Rechazado", "valor_referencia": "Según TDR"}
+  ]
+}
+━━━ FIN DE EJEMPLOS ━━━
 
-PARA verificacion_fisica (mínimo 15 ítems si el documento lo permite):
-- Examina TODAS las páginas incluyendo tablas escaneadas como imágenes
-- Extrae TODOS los requerimientos técnicos: espesores de plancha, materiales (ASTM, SAE, DIN), dimensiones, capacidades, presiones, potencias, normas (ISO, NTP, ASTM)
-- Cada ítem debe ser verificable físicamente en el taller
-
-PARA accesorios_adicionales:
-- Solo elementos que NO vienen de fábrica estándar con el chasis
-- Ejemplos: circulinas, cámaras de retroceso, GPS, extintores, conos, herramientas, botiquín
-
-PARA pruebas_funcionamiento — DEDUCE según tipo_maquina:
-- COMPACTADORA: Tiempo ciclo compactación, Presión hidráulica, Prueba eyector, RPM PTO, Estanqueidad panel trasero
-- CISTERNA: Estanqueidad al 100%, Presión hidrostática, Caudal descarga, Presión bomba, Tiempo llenado/descarga
-- VOLQUETE: Ángulo volcado, Tiempo levantamiento/bajada tolva, Presión cilindro hidráulico
-- BARREDORA: Ancho barrido, Caudal sistema agua, RPM cepillos
-- Para otros equipos: deduce pruebas lógicas según el tipo identificado
-
-IMPORTANTE: Extrae los valores REALES del documento. Solo usa valores genéricos si una especificación realmente no está mencionada en ninguna página del documento."""
-
-USER_PROMPT = """Analiza todos los documentos adjuntos (TDR y/o Oferta Técnica). Examina cada página incluyendo tablas escaneadas.
-
-Genera el checklist de inspección de control de calidad completo.
-
-Responde ÚNICAMENTE con el JSON puro, sin texto adicional antes ni después."""
+El número de ítems en tu respuesta debe reflejar exclusivamente lo que contiene el documento analizado."""
 
 
-def generate_checklist_from_pdfs(pdf_files: list, api_key: str) -> dict:
-    """
-    Sube los PDFs a la Files API de Gemini y genera el checklist.
-    Maneja PDFs escaneados nativamente — Gemini lee las imágenes directamente.
-    """
-    client = genai.Client(api_key=api_key)
-    uploaded_file_refs = []
+USER_PROMPT_TEXT = """Analiza el siguiente texto extraído del documento técnico (TDR y/o Oferta Técnica) y genera el checklist de inspección QC.
 
-    # ── 1. Subir cada PDF a la Files API ─────────────────────────────
-    for uploaded_file in pdf_files:
-        file_bytes = uploaded_file.read()
-        uploaded_file.seek(0)
+{text}
 
-        file_ref = client.files.upload(
-            file=io.BytesIO(file_bytes),
-            config=genai.types.UploadFileConfig(
-                mime_type="application/pdf",
-                display_name=uploaded_file.name,
-            ),
-        )
+Recuerda: extrae SOLO lo que aparece en el documento. No añadas ítems que no estén mencionados."""
 
-        # Esperar a que el archivo esté ACTIVE (máx 30 seg)
-        waited = 0
-        while file_ref.state.name == "PROCESSING" and waited < 30:
-            time.sleep(2)
-            waited += 2
-            file_ref = client.files.get(name=file_ref.name)
+USER_PROMPT_FILES = """Analiza todos los documentos adjuntos (TDR y/o Oferta Técnica).
+Examina cada página incluyendo tablas escaneadas e imágenes.
+Genera el checklist de inspección QC extrayendo SOLO lo que aparece en los documentos."""
 
-        uploaded_file_refs.append(file_ref)
 
-    # ── 2. Construir contenido: archivos + prompt ─────────────────────
-    contents = uploaded_file_refs + [USER_PROMPT]
+# ─────────────────────── CONFIG COMPARTIDA ─────────────────────────
+# temperature=0 (Palanca 1): elimina aleatoriedad en la selección de tokens.
+# response_mime_type + response_schema (Palanca 2): fuerza estructura exacta.
+# El modelo no puede devolver campos extra, renombrar llaves ni cambiar tipos.
 
-    # ── 3. Llamar al modelo ───────────────────────────────────────────
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=contents,
-        config=genai.types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-        ),
+def _get_llm_config() -> genai.types.GenerateContentConfig:
+    return genai.types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0,
+        response_mime_type="application/json",
+        response_schema=ChecklistQC,
     )
 
-    # ── 4. Limpiar archivos subidos ───────────────────────────────────
-    for ref in uploaded_file_refs:
-        try:
-            client.files.delete(name=ref.name)
-        except Exception:
-            pass
 
-    # ── 5. Parsear respuesta ──────────────────────────────────────────
-    raw_text = response.text.strip()
+# ─────────────────────────── EXTRACCIÓN HÍBRIDA ────────────────────
 
-    if raw_text.startswith("```"):
-        lines = raw_text.split("\n")
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        raw_text = "\n".join(lines).strip()
+def _try_pdfplumber(file_bytes: bytes, filename: str) -> tuple[str, int, int]:
+    """Intenta extraer texto con pdfplumber."""
+    text_parts = []
+    pages_with_text = 0
+    total_pages = 0
 
-    checklist_data = json.loads(raw_text)
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        total_pages = len(pdf.pages)
+        for i, page in enumerate(pdf.pages):
+            page_text = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
+            if len(page_text.strip()) >= MIN_CHARS_PER_PAGE:
+                pages_with_text += 1
+                text_parts.append(f"[Pág {i+1}]\n{page_text.strip()}")
 
-    required_keys = ["tipo_maquina", "datos_equipo", "verificacion_fisica",
-                     "accesorios_adicionales", "pruebas_funcionamiento"]
-    for key in required_keys:
-        if key not in checklist_data:
-            checklist_data[key] = [] if key not in ["tipo_maquina", "datos_equipo"] else {}
+    full_text = (
+        f"\n{'='*50}\nDOCUMENTO: {filename}\n{'='*50}\n"
+        + "\n\n".join(text_parts)
+    )
+    return full_text, pages_with_text, total_pages
 
-    return checklist_data
+
+def extract_content(pdf_files) -> tuple[str | None, list, dict]:
+    """
+    Extracción híbrida: pdfplumber primero, Files API para escaneados.
+    Devuelve: (texto, archivos_escaneados, stats)
+    """
+    all_texts = []
+    scanned_files = []
+    stats = {"text_pages": 0, "scanned_pages": 0, "total_pages": 0}
+
+    for uf in pdf_files:
+        file_bytes = uf.read()
+        uf.seek(0)
+
+        text, pages_ok, total = _try_pdfplumber(file_bytes, uf.name)
+        stats["total_pages"] += total
+        stats["text_pages"] += pages_ok
+        stats["scanned_pages"] += (total - pages_ok)
+
+        coverage = pages_ok / total if total > 0 else 0
+        if coverage >= 0.4:
+            all_texts.append(text)
+        else:
+            scanned_files.append((file_bytes, uf.name))
+            if pages_ok > 0:
+                all_texts.append(text)
+
+    text_content = "\n\n".join(all_texts) if all_texts else None
+    return text_content, scanned_files, stats
+
+
+# ─────────────────────────── PARSEO ────────────────────────────────
+
+def _parse_response(response) -> dict:
+    """
+    Con response_schema activo, Gemini garantiza JSON válido con la estructura
+    correcta. `response.parsed` devuelve el objeto Pydantic directamente.
+    Convertimos a dict para compatibilidad con el resto de la app.
+    """
+    if response.parsed is not None:
+        data = response.parsed.model_dump()
+    else:
+        # Fallback defensivo: parsear texto si .parsed no está disponible
+        raw = response.text.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            lines = lines[1:] if lines[0].startswith("```") else lines
+            lines = lines[:-1] if lines and lines[-1].strip() == "```" else lines
+            raw = "\n".join(lines).strip()
+        data = json.loads(raw)
+
+    # Siempre forzar el carrocero correcto (no depender de la IA para esto)
+    if isinstance(data.get("datos_equipo"), dict):
+        data["datos_equipo"]["nombre_carrocero"] = "Grupo iMetales S.A.C."
+
+    return data
+
+
+# ─────────────────────────── FUNCIÓN PRINCIPAL ─────────────────────
+
+def generate_checklist_from_pdfs(pdf_files: list, api_key: str) -> tuple[dict, dict]:
+    """
+    Orquesta extracción híbrida + llamada al LLM con las tres palancas activas.
+    Devuelve: (checklist_data, stats)
+    """
+    client = genai.Client(api_key=api_key)
+
+    # ── Paso 1: Extracción híbrida ──────────────────────────────────
+    text_content, scanned_files, stats = extract_content(pdf_files)
+
+    # ── Paso 2: Llamada al LLM ──────────────────────────────────────
+    if not scanned_files:
+        # PDFs con texto — ruta rápida
+        stats["method"] = "texto"
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=USER_PROMPT_TEXT.format(text=text_content[:50_000]),
+            config=_get_llm_config(),
+        )
+
+    else:
+        # PDFs escaneados — Files API
+        stats["method"] = "ocr"
+        uploaded_refs = []
+
+        for file_bytes, filename in scanned_files:
+            ref = client.files.upload(
+                file=io.BytesIO(file_bytes),
+                config=genai.types.UploadFileConfig(
+                    mime_type="application/pdf",
+                    display_name=filename,
+                ),
+            )
+            waited = 0
+            while ref.state.name == "PROCESSING" and waited < 30:
+                time.sleep(2)
+                waited += 2
+                ref = client.files.get(name=ref.name)
+            uploaded_refs.append(ref)
+
+        contents = []
+        if text_content:
+            contents.append(
+                f"TEXTO DE PÁGINAS LEGIBLES:\n{text_content[:25_000]}\n\n"
+                f"PÁGINAS ESCANEADAS (ver archivos adjuntos):"
+            )
+        contents += uploaded_refs
+        contents.append(USER_PROMPT_FILES)
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=_get_llm_config(),
+        )
+
+        for ref in uploaded_refs:
+            try:
+                client.files.delete(name=ref.name)
+            except Exception:
+                pass
+
+    # ── Paso 3: Parsear y devolver ──────────────────────────────────
+    checklist_data = _parse_response(response)
+    return checklist_data, stats
