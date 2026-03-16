@@ -709,9 +709,9 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
   <!-- FOOTER                                              -->
   <!-- ═══════════════════════════════════════════════════ -->
   <div class="doc-footer">
-    <span>Generado con IA el {generated_at} · Basado en TDR/Oferta Técnica</span>
-    <span>CHK-CC-001 · Rev. 0 · Página 1 de 1</span>
-    <span>VERIFICAR ESPECIFICACIONES CONTRA DOCUMENTO ORIGINAL</span>
+    <span>Generado con IA el {generated_at} · Basado en Oferta Técnica</span>
+    <span>CHK-IA-001</span>
+    <span>VERIFICAR ESPECIFICACIONES CON DOCUMENTO ORIGINAL</span>
   </div>
 
 </div>
