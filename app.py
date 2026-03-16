@@ -73,7 +73,7 @@ st.markdown("""
   <p>Inspección de Control de Calidad · Integración Chasis–Carrocería · Contratos Estado Peruano</p>
   <div>
     <span class="badge">v1.0</span>
-    <span class="badge">IA · Gemini 2.5 Pro</span>
+    <span class="badge">IA · Gemini 2.5 Flash</span>
     <span class="badge">PDF · TDR / OFERTA TÉCNICA</span>
   </div>
 </div>
