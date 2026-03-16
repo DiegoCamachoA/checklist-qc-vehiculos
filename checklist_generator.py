@@ -7,7 +7,7 @@ import json
 import os
 import io
 import pdfplumber
-import google.generativeai as genai
+from google import genai
 
 
 # ─────────────────────────── SYSTEM PROMPT ─────────────────────────
@@ -115,12 +115,8 @@ def generate_checklist_with_llm(pdf_text: str) -> dict:
             "Configúrala en los Secrets de Streamlit Cloud o en el sidebar."
         )
 
-    # Configurar cliente Gemini
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=SYSTEM_PROMPT,
-    )
+    # Configurar cliente con el nuevo SDK (google-genai)
+    client = genai.Client(api_key=api_key)
 
     # Limitar texto a ~50k caracteres
     max_chars = 50_000
@@ -128,13 +124,20 @@ def generate_checklist_with_llm(pdf_text: str) -> dict:
     if len(pdf_text) > max_chars:
         truncated_text += f"\n\n[NOTA: Texto truncado. Se procesaron {max_chars:,} de {len(pdf_text):,} caracteres totales.]"
 
-    user_message = f"""Analiza el siguiente documento técnico (TDR y/o Oferta Técnica) y genera el checklist de inspección de control de calidad completo en formato JSON:
+    full_prompt = f"""{SYSTEM_PROMPT}
+
+---
+
+Analiza el siguiente documento técnico (TDR y/o Oferta Técnica) y genera el checklist de inspección de control de calidad completo en formato JSON:
 
 {truncated_text}
 
 IMPORTANTE: Responde ÚNICAMENTE con el JSON puro. Ningún texto, ningún bloque markdown antes ni después."""
 
-    response = model.generate_content(user_message)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=full_prompt,
+    )
     raw_text = response.text.strip()
 
     # Limpieza defensiva de posibles bloques markdown
