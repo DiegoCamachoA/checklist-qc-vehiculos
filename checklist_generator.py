@@ -118,7 +118,7 @@ def generate_checklist_with_llm(pdf_text: str) -> dict:
     # Configurar cliente Gemini
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-pro",
+        model_name="gemini-2.5-flash",
         system_instruction=SYSTEM_PROMPT,
     )
 
