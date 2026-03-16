@@ -1,5 +1,5 @@
 """
-Generador de Checklist de Inspección QC
+Generador de Checklist de Inspección · Control de Calidad
 Aplicación Streamlit · Google Gemini API · Diseño claro y minimalista
 """
 
@@ -7,12 +7,13 @@ import streamlit as st
 import json
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from checklist_generator import generate_checklist_from_pdfs
 from export_utils import generate_html_checklist
 
 # ─────────────────────────── PAGE CONFIG ───────────────────────────
 st.set_page_config(
-    page_title="Checklist QC · Inspección Vehículos Especiales",
+    page_title="Checklist · Control de Calidad · Vehículos Especiales",
     page_icon="🔧",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -393,7 +394,7 @@ hr { border-color: var(--border) !important; margin: 16px 0 !important; }
 # ─────────────────────────── HEADER ────────────────────────────────
 st.markdown("""
 <div class="app-header">
-  <h1>🔧 Generador de Checklist de Inspección QC</h1>
+  <h1>🔧 Generador de Checklist de Inspección · Control de Calidad</h1>
   <p>Control de Calidad · Integración Chasis–Carrocería · Contratos Estado Peruano</p>
   <div>
     <span class="badge">v1.1</span>
@@ -492,7 +493,7 @@ if generate_btn and uploaded_files:
                     unsafe_allow_html=True
                 )
                 st.session_state.checklist_data  = checklist_data
-                st.session_state.generated_at    = datetime.now().strftime("%d/%m/%Y %H:%M")
+                st.session_state.generated_at    = datetime.now(ZoneInfo("America/Lima")).strftime("%d/%m/%Y")
             except json.JSONDecodeError as e:
                 st.markdown(f'<div class="status-err">✗ Error al parsear respuesta de Gemini: {e}</div>', unsafe_allow_html=True)
                 st.stop()
@@ -696,7 +697,7 @@ with col_right:
           <div class="cl-sig">
             <div class="cl-sig-space"></div>
             <div class="cl-sig-name">Ingeniero Inspector</div>
-            <div class="cl-sig-role">Empresa Contratista · Responsable QC · CIP: ____________</div>
+            <div class="cl-sig-role">Empresa Contratista · Responsable Control de Calidad · DNI: ____________</div>
           </div>
           <div class="cl-sig">
             <div class="cl-sig-space"></div>
