@@ -198,7 +198,7 @@ def generate_html_checklist(data: dict, generated_at: str = "") -> str:
     }}
     .machine-banner .tag {{
       background: #1e3a8a;
-      color: #1a1a1a;
+      color: white;
       padding: 1px 8px;
       font-size: 7.5pt;
       border-radius: 2px;
