@@ -81,18 +81,6 @@ st.markdown("""
 
 # ─────────────────────────── SIDEBAR ───────────────────────────────
 with st.sidebar:
-    st.markdown("### ⚙ Configuración")
-    api_key_input = st.text_input(
-        "GEMINI_API_KEY",
-        value=os.getenv("GEMINI_API_KEY", ""),
-        type="password",
-        help="Obtén tu key gratuita en aistudio.google.com",
-        placeholder="AIza..."
-    )
-    if api_key_input:
-        os.environ["GEMINI_API_KEY"] = api_key_input
-
-    st.markdown("---")
     st.markdown("### 📋 Instrucciones")
     st.markdown("""
     1. **Sube** tus PDFs (TDR y/o Oferta Técnica)
@@ -126,7 +114,7 @@ with col_left:
     api_ready = bool(os.getenv("GEMINI_API_KEY"))
     files_ready = bool(uploaded_files)
     if not api_ready:
-        st.markdown('<div class="status-err">✗ Falta GEMINI_API_KEY · Configura en el sidebar</div>', unsafe_allow_html=True)
+        st.markdown('<div class="status-err">✗ Falta GEMINI_API_KEY · Configúrala en Streamlit Cloud → Settings → Secrets</div>', unsafe_allow_html=True)
 
     generate_btn = st.button(
         "🔍 GENERAR CHECKLIST",
@@ -148,10 +136,18 @@ with col_left:
 # ─────────────────────────── GENERATION LOGIC ──────────────────────
 if generate_btn and uploaded_files:
     with col_right:
-        with st.spinner("Subiendo PDFs y analizando con Gemini 2.5 Flash... (puede tardar 30-60 seg en PDFs escaneados)"):
+        with st.spinner("Analizando documentos con Gemini 2.5 Flash..."):
             try:
                 api_key = os.getenv("GEMINI_API_KEY")
-                checklist_data = generate_checklist_from_pdfs(uploaded_files, api_key)
+                checklist_data, proc_stats = generate_checklist_from_pdfs(uploaded_files, api_key)
+                method = proc_stats.get("method", "texto")
+                tp = proc_stats.get("text_pages", 0)
+                sp = proc_stats.get("scanned_pages", 0)
+                method_label = "texto digital" if method == "texto" else "OCR (páginas escaneadas)"
+                st.markdown(
+                    f'<div class="status-ok">✓ {tp} págs. con texto + {sp} págs. escaneadas · Método: {method_label}</div>',
+                    unsafe_allow_html=True
+                )
                 st.session_state.checklist_data = checklist_data
                 st.session_state.generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
                 st.markdown('<div class="status-ok">✓ Checklist generado exitosamente</div>', unsafe_allow_html=True)
