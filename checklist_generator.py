@@ -97,10 +97,21 @@ Tu tarea: analizar documentos técnicos (TDR y/o Ofertas Técnicas) y extraer Ú
 
 3. ACCESORIOS: solo elementos que no vienen de fábrica estándar con el chasis.
 
-4. PRUEBAS: dedúcelas según el tipo de equipo identificado, usando valores del
+4. SEPARACIÓN ESTRICTA entre verificacion_fisica y pruebas_funcionamiento — REGLA CRÍTICA:
+   • verificacion_fisica → parámetros verificables con la máquina APAGADA y estática:
+     dimensiones, espesores, materiales, existencia de componentes, acabados, pintura,
+     conexiones, instalación de accesorios. Se verifica con cinta métrica, calibrador o de visu.
+   • pruebas_funcionamiento → parámetros que SOLO se pueden medir con la máquina OPERANDO:
+     tiempos de ciclo, presiones en operación, caudales, RPM, ángulos bajo carga, temperaturas,
+     pruebas de estanqueidad bajo presión, velocidades de movimiento, consumos.
+   UN MISMO PARÁMETRO NO PUEDE APARECER EN AMBAS SECCIONES.
+   Si un parámetro requiere operar la máquina para medirlo → va SOLO en pruebas_funcionamiento.
+   Si un parámetro se verifica sin operar la máquina → va SOLO en verificacion_fisica.
+
+5. PRUEBAS: dedúcelas según el tipo de equipo identificado, usando valores del
    documento si existen. Si no existen valores de referencia, indica "Según TDR".
 
-5. VALOR NO ENCONTRADO: si una especificación no aparece en el documento,
+6. VALOR NO ENCONTRADO: si una especificación no aparece en el documento,
    escribe "Verificar en TDR" — NUNCA inventes valores numéricos.
 
 ━━━ EJEMPLOS DE FORMATO (calibración de verbosidad únicamente) ━━━
